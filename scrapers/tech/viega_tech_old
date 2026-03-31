@@ -1,0 +1,421 @@
+import pandas as pd
+import re
+import sys
+import time
+import os
+import urllib.parse
+import datetime
+import requests
+import io
+from playwright.sync_api import sync_playwright
+
+# Pokusíme se importovat pdfplumber, pokud není nainstalován, upozorníme uživatele
+try:
+    import pdfplumber
+except ImportError:
+    print("❌ CHYBA: Chybí knihovna 'pdfplumber'. Nainstalujte ji příkazem: pip install pdfplumber requests", file=sys.stderr)
+    sys.exit(1)
+
+class ViegaTechScraperV13:
+    def __init__(self, excel_path="benchmark_master_v3_fixed.xlsx"):
+        self.excel_path = excel_path
+        self.tech_cols = [
+            "Component_SKU", "Manufacturer", "Tech_Source_URL", "Datasheet_URL", 
+            "Flow_Rate_l_s", "Material_V4A", "Cert_EN1253", "Cert_EN18534", 
+            "Height_Adjustability", "Vertical_Outlet_Option", "Sealing_Fleece", "Color_Count"
+        ]
+        self.price_cols = [
+            "Component_SKU", "Eshop_Source", "Found_Price_EUR", 
+            "Price_Breakdown", "Product_URL", "Timestamp"
+        ]
+
+    def check_excel_access(self):
+        if os.path.exists(self.excel_path):
+            try:
+                with open(self.excel_path, "a+"): pass
+            except PermissionError:
+                print(f"❌ ERROR: Excel '{self.excel_path}' je otevřený! Prosím zavřete ho.")
+                sys.exit(1)
+
+    def get_tasks(self):
+        try:
+            df = pd.read_excel(self.excel_path, sheet_name="BOM_Definitions")
+            tasks = []
+            seen = set()
+            for _, row in df.iterrows():
+                name = str(row["Component_Name"]).strip()
+                sku = str(row["Component_SKU"]).strip()
+                if "viega" in name.lower():
+                    if sku not in seen:
+                        seen.add(sku)
+                        tasks.append({"sku": sku, "name": name})
+            return tasks
+        except Exception as e:
+            print(f"⚠️ Chyba při čtení Excelu: {e}", file=sys.stderr)
+            return []
+
+    # --- ČTEČKA PDF ---
+    def download_and_read_pdf(self, pdf_url):
+        """Stáhne PDF do paměti a vrátí jeho textový obsah."""
+        print(f"         📥 Stahuji a čtu PDF: {pdf_url} ...", file=sys.stderr)
+        try:
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+            response = requests.get(pdf_url, headers=headers, timeout=10)
+            
+            if response.status_code == 200:
+                text_content = ""
+                with pdfplumber.open(io.BytesIO(response.content)) as pdf:
+                    # Přečteme první 3 strany (tam bývají technická data)
+                    for i, page in enumerate(pdf.pages[:3]):
+                        text = page.extract_text()
+                        if text:
+                            text_content += f" {text}"
+                
+                print(f"         📝 Přečteno {len(text_content)} znaků z PDF.", file=sys.stderr)
+                return text_content
+            else:
+                print(f"         ⚠️ PDF se nepodařilo stáhnout (Status: {response.status_code})", file=sys.stderr)
+                return ""
+        except Exception as e:
+            print(f"         ⚠️ Chyba při čtení PDF: {e}", file=sys.stderr)
+            return ""
+
+    def extract_best_height(self, text):
+        best_val = None
+        clean_text = re.sub(r'Sperrwasserhöhe.{0,20}\d+\s*(?:mm)?', '', text, flags=re.IGNORECASE)
+        clean_text = clean_text.replace('\n', ' ')
+        
+        # 1. Hledání spojeného formátu (90-110 mm)
+        matches = re.finditer(r'(?:Einbautiefe|Aufbauhöhe|Einbaumaß|Einbauhöhe|Bauhöhe|Höhe|Installation height|Stavební výška).{0,80}?(\d+\s*[-–]\s*\d+|\d{2,3})\s*(?:mm)?', clean_text, re.IGNORECASE)
+        for m in matches:
+            val = m.group(1).replace(" ", "").replace("–", "-")
+            if "-" not in val and int(val) < 40: continue
+            if "-" in val:
+                best_val = val 
+                break
+            elif not best_val:
+                best_val = val 
+        
+        # 2. Hledání rozděleného formátu (von X ... bis Y) - typické pro Viegu
+        if not best_val:
+            match_von = re.search(r'(?:Bauhöhe|Einbaumaß).*?von\s*(\d{2,3})', clean_text, re.IGNORECASE)
+            match_bis = re.search(r'(?:Bauhöhe|Einbaumaß).*?bis\s*(\d{2,3})', clean_text, re.IGNORECASE)
+            if match_von and match_bis:
+                best_val = f"{match_von.group(1)}-{match_bis.group(1)}"
+
+        return f"{best_val} mm" if best_val else "N/A"
+
+    def extract_flow_rate(self, text):
+        max_flow = 0.0
+        clean_text = text.replace('\n', ' ')
+        
+        # 1. Specifické Viega formátování (Ablaufleistung ... 0,X)
+        matches_viega = re.finditer(r'(?:Ablaufleistung|Abflussleistung).{0,80}?(\d+[,.]\d+)', clean_text, re.IGNORECASE)
+        for m in matches_viega:
+            try:
+                val_str = m.group(1).replace(",", ".")
+                val = float(val_str)
+                # Ochrana: 10 mm nebo 20 mm nejsou průtok. Průtok je obvykle pod 2.0
+                if 0.2 <= val <= 2.5 and val > max_flow: 
+                    max_flow = val
+            except: pass
+            
+        # 2. Obecné formátování s l/s
+        if max_flow == 0.0:
+            matches = re.finditer(r'(\d+(?:[.,]\d+)?)\s*(l/s|l/min)', clean_text, re.IGNORECASE)
+            for m in matches:
+                try:
+                    val = float(m.group(1).replace(",", "."))
+                    if 0.2 <= val <= 3.5 and val > max_flow: max_flow = val
+                except: pass
+
+        return f"{max_flow:.2f} l/s" if max_flow > 0 else "N/A"
+
+    def extract_material(self, text):
+        lower_text = text.lower()
+        if "1.4404" in lower_text or "v4a" in lower_text or "316l" in lower_text: return "Edelstahl V4A (1.4404) (Yes V4A)"
+        elif "1.4301" in lower_text or "v2a" in lower_text or "304" in lower_text or "edelstahl" in lower_text or "stainless steel" in lower_text: return "Edelstahl V2A (1.4301)"
+        elif "polypropylen" in lower_text or "kunststoff" in lower_text or "plastic" in lower_text or "plast" in lower_text or "pp" in lower_text: return "Kunststoff (Polypropylen)"
+        return "N/A"
+
+    def extract_price(self, page):
+        try:
+            price_content = page.locator('meta[itemprop="price"]').first.get_attribute('content', timeout=1000)
+            if price_content: return float(price_content.replace(',', '.'))
+        except: pass
+        try:
+            body_text = page.evaluate("document.body.innerText")
+            matches = re.findall(r'(\d{1,3}(?:\.\d{3})*)[,.](\d{2})\s*(?:€|EUR)', body_text)
+            if matches:
+                main_part = matches[0][0].replace('.', '')
+                return float(f"{main_part}.{matches[0][1]}")
+        except: pass
+        return "N/A"
+
+    def destroy_cookie_banners(self, page):
+        try:
+            page.evaluate("""
+                const banners = document.querySelectorAll('#cc--main, #c-s-in, .cookiebot, #cookiebanner, .cc-window, .cookie-consent, #cmpbox, #onetrust-consent-sdk, .ot-pc-container');
+                banners.forEach(el => el.remove());
+                document.body.style.overflow = 'auto';
+            """)
+        except: pass
+
+    def search_shops_stealth(self, page, sku, raw_name):
+        clean_name = re.sub(r'Viega|Advantix|Vario', '', raw_name, flags=re.IGNORECASE).strip()
+        sku_clean = sku.replace(' ', '')
+        queries = list(dict.fromkeys([sku, sku_clean, clean_name]))
+        queries = [q for q in queries if len(q) > 2]
+        
+        shops = [
+            {
+                "name": "Viega.de",
+                "url_template": "https://www.viega.de/de/Suche.html?q={}",
+                "cookie_sel": "button#onetrust-accept-btn-handler"
+            },
+            {
+                "name": "Megabad.com",
+                "url_template": "https://www.megabad.com/suche?q={}",
+                "cookie_sel": ".cmpboxbtnyes"
+            }
+        ]
+
+        for shop in shops:
+            for query in queries:
+                print(f"         🛒 {shop['name']}: Napřímo vyhledávám '{query}' přes URL...", file=sys.stderr)
+                try:
+                    search_url = shop["url_template"].format(urllib.parse.quote(query))
+                    response = page.goto(search_url, timeout=30000)
+                    
+                    if response and response.status in [403, 429]:
+                        print(f"         🛑 {shop['name']} zablokoval přístup.", file=sys.stderr)
+                        break
+
+                    time.sleep(2)
+                    try: page.locator(shop["cookie_sel"]).first.click(timeout=1500, force=True)
+                    except: pass
+                    self.destroy_cookie_banners(page)
+                    page.wait_for_load_state("domcontentloaded")
+
+                    is_detail = False
+                    if "viega" in shop["name"].lower() and ("/produkte/Katalog/" in page.url or "/artikel/" in page.url) and query in page.url:
+                        is_detail = True
+                    elif "megabad" in shop["name"].lower() and page.locator(".product-detail-price").count() > 0:
+                        is_detail = True
+
+                    if not is_detail:
+                        links = page.locator("a").all()
+                        target_href = None
+                        for l in links:
+                            if l.is_visible():
+                                raw_href = l.get_attribute("href")
+                                if not raw_href: continue
+                                href = raw_href.lower()
+                                text = l.inner_text().upper()
+                                if any(x in href for x in ["bewertung", "img", "basket", "login", "tel:"]): continue
+                                
+                                if "viega" in shop["name"].lower():
+                                    if ("/produkte/katalog/" in href or "/artikel/" in href or "/produkte/" in href):
+                                        if query in text.replace(' ', '') or query in href:
+                                            target_href = raw_href
+                                            break
+                                elif "megabad" in shop["name"].lower():
+                                    if "/produkt" in href or "-a-" in href or "-p-" in href:
+                                        target_href = raw_href
+                                        break
+
+                        if target_href:
+                            print(f"         🚀 Odkaz na produkt nalezen! Přecházím na detail...", file=sys.stderr)
+                            if not target_href.startswith("http"):
+                                domain = "https://www.viega.de" if "viega" in shop["name"].lower() else "https://www.megabad.com"
+                                target_href = domain.rstrip("/") + "/" + target_href.lstrip("/")
+                            page.goto(target_href, timeout=20000)
+                            page.wait_for_load_state("domcontentloaded")
+                            time.sleep(2)
+                        else:
+                            print(f"         ⚠️ Žádný konkrétní produktový odkaz nenalezen.", file=sys.stderr)
+                            continue
+
+                    self.destroy_cookie_banners(page)
+                    found_price = self.extract_price(page)
+
+                    # 🔴 DEEP SCROLL A HLEDÁNÍ PDF
+                    print(f"         🖱️ Scrolluji a hledám sekci 'Downloads'...", file=sys.stderr)
+                    for i in range(1, 6):
+                        page.evaluate(f"window.scrollTo(0, document.body.scrollHeight * {i/5});")
+                        time.sleep(0.3)
+                    
+                    # 🔴 EXPLICITNÍ KLIKNUTÍ NA "DOWNLOADS" NEBO "DATENBLATT"
+                    print(f"         📂 Pokouším se otevřít šuplíky (Downloads/Technische)...", file=sys.stderr)
+                    buttons = page.locator("button:has-text('Downloads'), button:has-text('Download'), h3:has-text('Download'), .accordion-button").all()
+                    for b in buttons:
+                        try:
+                            if b.is_visible():
+                                b.click(timeout=1000, force=True)
+                                time.sleep(0.5)
+                        except: pass
+
+                    # 🔴 EXTARAKCE DAT Z TEXTU + PDF
+                    combined_text = page.evaluate("document.body.innerText")
+                    
+                    pdf_href = "N/A"
+                    try:
+                        pdf_links = page.locator("a[href*='.pdf'], a[href*='data-sheets'], a:has-text('Datenblatt')").all()
+                        print(f"         🔎 Našel jsem {len(pdf_links)} potenciálních odkazů na PDF.", file=sys.stderr)
+                        
+                        for link in pdf_links:
+                            raw_href = link.get_attribute("href")
+                            if not raw_href: continue
+                            
+                            # Priorita pro technické listy
+                            if "data-sheets" in raw_href or "datenblatt" in raw_href.lower() or "montage" in raw_href.lower():
+                                if not raw_href.startswith("http"):
+                                    raw_href = "https://www.viega.de" + raw_href
+                                
+                                pdf_href = raw_href
+                                # 🔴 STÁHNUTÍ A PŘEČTENÍ PDF
+                                pdf_text = self.download_and_read_pdf(pdf_href)
+                                combined_text += " " + pdf_text
+                                break
+                    except Exception as e:
+                        print(f"         ⚠️ Chyba při hledání PDF: {e}", file=sys.stderr)
+
+                    f_rate = self.extract_flow_rate(combined_text)
+                    h_adj = self.extract_best_height(combined_text)
+                    
+                    if f_rate != "N/A" or h_adj != "N/A" or found_price != "N/A" or "viega" in shop["name"].lower():
+                        return combined_text, page.url, shop["name"], found_price, pdf_href
+                    else:
+                        print(f"         ⚠️ Produkt otevřen, ale chybí data. Zkouším další...", file=sys.stderr)
+
+                except Exception as e:
+                    print(f"         ⚠️ Chyba při zpracování: {e}", file=sys.stderr)
+                    
+        return "", "N/A", "N/A", "N/A", "N/A"
+
+    def run(self):
+        self.check_excel_access()
+        tasks = self.get_tasks()
+        
+        if not tasks: 
+            print("⚠️ POZOR: V Excelu jsem nenašel žádné produkty Viega.", file=sys.stderr)
+            return
+            
+        print(f"🚀 Spouštím Viega Tech & Price Scraper V13 (PDF Reader & Debugger) pro {len(tasks)} produktů...", file=sys.stderr)
+        tech_results = []
+        price_results = []
+
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=False, args=['--disable-blink-features=AutomationControlled'])
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+                viewport={"width": 1920, "height": 1080}
+            )
+            page = context.new_page()
+
+            for task in tasks:
+                sku = task["sku"]
+                raw_name = task["name"]
+                
+                print(f"\n{'='*50}\n🔍 Zpracovávám: {sku}\n{'='*50}", file=sys.stderr)
+                
+                extracted_data = {
+                    "Component_SKU": sku,
+                    "Manufacturer": "Viega",
+                    "Tech_Source_URL": "N/A",
+                    "Datasheet_URL": "N/A",
+                    "Flow_Rate_l_s": "N/A",
+                    "Material_V4A": "N/A",
+                    "Cert_EN1253": "No",
+                    "Cert_EN18534": "No",
+                    "Height_Adjustability": "N/A",
+                    "Vertical_Outlet_Option": "Check Drawing",
+                    "Sealing_Fleece": "No",
+                    "Color_Count": 1
+                }
+
+                content, source_url, source_eshop, price, pdf_href = self.search_shops_stealth(page, sku, raw_name)
+                
+                if content:
+                    extracted_data["Tech_Source_URL"] = source_url
+                    extracted_data["Datasheet_URL"] = pdf_href
+                    extracted_data["Flow_Rate_l_s"] = self.extract_flow_rate(content)
+                    extracted_data["Height_Adjustability"] = self.extract_best_height(content)
+                    extracted_data["Material_V4A"] = self.extract_material(content)
+                    
+                    if "1253" in content: extracted_data["Cert_EN1253"] = "Yes"
+                    if "18534" in content: extracted_data["Cert_EN18534"] = "Yes"
+                    
+                    lower_content = content.lower()
+                    if any(word in lower_content for word in ["tape", "band", "fleece", "páska", "vlies", "manschette", "dichtband"]):
+                        extracted_data["Sealing_Fleece"] = "Yes"
+
+                    dn_match = re.search(r'(?:Abflussrohr|Nennweite|Rohranschluss|DN)\s*[:\-]?\s*(\d{2,3})', content, re.IGNORECASE)
+                    direction = ""
+                    if re.search(r'\bsenkrecht|\bvertical', content, re.IGNORECASE): direction = " Vertical"
+                    elif re.search(r'\bwaagerecht|\bhorizontal', content, re.IGNORECASE): direction = " Horizontal"
+                        
+                    if dn_match:
+                        extracted_data["Vertical_Outlet_Option"] = f"DN{dn_match.group(1)}{direction}".strip()
+                    elif direction:
+                        extracted_data["Vertical_Outlet_Option"] = direction.strip()
+
+                    if price != "N/A":
+                        price_results.append({
+                            "Component_SKU": sku,
+                            "Eshop_Source": source_eshop,
+                            "Found_Price_EUR": price,
+                            "Price_Breakdown": "Single",
+                            "Product_URL": source_url,
+                            "Timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
+                        })
+
+                if "rost" in raw_name.lower() or "cover" in raw_name.lower() or "stegrost" in raw_name.lower():
+                    extracted_data["Flow_Rate_l_s"] = "N/A"
+                    extracted_data["Height_Adjustability"] = "N/A"
+
+                print(f"         ✅ Materiál:  {extracted_data['Material_V4A']}", file=sys.stderr)
+                print(f"         ✅ Průtok:    {extracted_data['Flow_Rate_l_s']}", file=sys.stderr)
+                print(f"         ✅ Odtok:     {extracted_data['Vertical_Outlet_Option']}", file=sys.stderr)
+                print(f"         ✅ Výška:     {extracted_data['Height_Adjustability']}", file=sys.stderr)
+                print(f"         ✅ Fleece:    {extracted_data['Sealing_Fleece']}", file=sys.stderr)
+                print(f"         ✅ Cena EUR:  {price} (Eshop: {source_eshop})", file=sys.stderr)
+                
+                tech_results.append(extracted_data)
+
+            browser.close()
+
+        with pd.ExcelWriter(self.excel_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
+            if tech_results:
+                df_tech = pd.DataFrame(tech_results)[self.tech_cols]
+                try:
+                    existing_tech = pd.read_excel(self.excel_path, sheet_name="Products_Tech")
+                    for _, new_row in df_tech.iterrows():
+                        s = str(new_row['Component_SKU']).strip().lower()
+                        existing_tech = existing_tech[existing_tech['Component_SKU'].astype(str).str.strip().str.lower() != s]
+                    final_tech = pd.concat([existing_tech, df_tech], ignore_index=True)
+                except:
+                    final_tech = df_tech
+                final_tech.to_excel(writer, sheet_name="Products_Tech", index=False)
+                
+            if price_results:
+                df_price = pd.DataFrame(price_results)[self.price_cols]
+                try:
+                    existing_price = pd.read_excel(self.excel_path, sheet_name="Market_Prices")
+                    for _, new_row in df_price.iterrows():
+                        s = str(new_row['Component_SKU']).strip().lower()
+                        e = str(new_row['Eshop_Source']).strip().lower()
+                        existing_price = existing_price[
+                            ~((existing_price['Component_SKU'].astype(str).str.strip().str.lower() == s) & 
+                              (existing_price['Eshop_Source'].astype(str).str.strip().str.lower() == e))
+                        ]
+                    final_price = pd.concat([existing_price, df_price], ignore_index=True)
+                except:
+                    final_price = df_price
+                final_price.to_excel(writer, sheet_name="Market_Prices", index=False)
+
+        print("\n✅ Hotovo! Technická data i ceny byly uloženy.", file=sys.stderr)
+
+if __name__ == "__main__":
+    scraper = ViegaTechScraperV13()
+    scraper.run()

@@ -1,0 +1,9 @@
+{
+    "weights": {
+        "price": 0.5,
+        "material_quality": 0.2,
+        "installation_height": 0.15,
+        "flow_rate": 0.15
+    },
+    "show_failed_products": false
+}

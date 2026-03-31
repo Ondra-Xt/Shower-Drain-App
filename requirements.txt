@@ -1,0 +1,7 @@
+playwright
+streamlit
+pandas
+openpyxl
+google-generativeai
+python-dotenv
+beautifulsoup4

@@ -1,0 +1,5 @@
+2026/02/11-14:59:43.597 849c Creating DB C:\Users\OCundr\OneDrive - Franz Kaldewei GmbH & Co. KG\Desktop\AI\Kaldewei\Benchmark agent\Drain systems\App v2\reuter_user_data\Default\Local Storage\leveldb since it was missing.
+2026/02/11-14:59:43.622 849c Reusing MANIFEST C:\Users\OCundr\OneDrive - Franz Kaldewei GmbH & Co. KG\Desktop\AI\Kaldewei\Benchmark agent\Drain systems\App v2\reuter_user_data\Default\Local Storage\leveldb/MANIFEST-000001
+2026/02/11-15:00:43.637 849c Level-0 table #5: started
+2026/02/11-15:00:43.646 849c Level-0 table #5: 134604 bytes OK
+2026/02/11-15:00:43.649 849c Delete type=0 #3

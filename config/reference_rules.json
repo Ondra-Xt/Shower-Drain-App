@@ -1,0 +1,15 @@
+{
+    "reference_product": {
+        "name": "KALDEWEI FlowLine Zero",
+        "target_length_mm": 1200,
+        "tolerance_mm": 100,
+        "min_length_mm": 1100,
+        "max_length_mm": 1300,
+        "cuttable_accepted": true
+    },
+    "requirements": {
+        "material_priority": "V4A",
+        "certifications": ["DIN 1253", "DIN 18534"],
+        "bom_logic": "complete_system"
+    }
+}
