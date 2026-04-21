@@ -5,6 +5,8 @@ import sys
 import os
 import datetime
 import asyncio
+import os
+os.system("playwright install chromium")
 
 # --- KRITICKÁ OPRAVA PRO WINDOWS ---
 if sys.platform == 'win32':
