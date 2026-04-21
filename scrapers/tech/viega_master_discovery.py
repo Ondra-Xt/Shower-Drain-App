@@ -205,17 +205,37 @@ class ViegaGreedyMaster:
 
         if all_collected:
             df_new = pd.DataFrame(all_collected)
+            
+            # --- CHYTRÝ PŘEKLADAČ HLAVIČEK ---
+            rename_map = {
+                "Component_SKU": "Article_Number_SKU",
+                "Manufacturer": "Brand",
+                "Tech_Source_URL": "Product_URL",
+                "Flow_Rate_l_s": "Flow_Rate_ls",
+                "Material_V4A": "Is_V4A"
+            }
+            df_new.rename(columns=rename_map, inplace=True)
+            # ---------------------------------
+
             if os.path.exists(self.excel_path):
                 df_tech = pd.read_excel(self.excel_path, sheet_name="Products_Tech")
-                df_tech['Component_SKU'] = df_tech['Component_SKU'].astype(str).str.replace('.0', '', regex=False).str.strip()
+                
+                # Zajištění, že nehledáme neexistující sloupec
+                sku_col = 'Article_Number_SKU' if 'Article_Number_SKU' in df_tech.columns else 'Component_SKU'
+                
+                if sku_col in df_tech.columns:
+                    df_tech[sku_col] = df_tech[sku_col].astype(str).str.replace('.0', '', regex=False).str.strip()
+                
                 df_combined = pd.concat([df_tech, df_new], ignore_index=True)
-                df_combined.drop_duplicates(subset=['Component_SKU'], keep='last', inplace=True)
+                
+                if sku_col in df_combined.columns:
+                    df_combined.drop_duplicates(subset=[sku_col], keep='last', inplace=True)
             else:
                 df_combined = df_new
 
             with pd.ExcelWriter(self.excel_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
                 df_combined.to_excel(writer, sheet_name="Products_Tech", index=False)
-            print(f"\n✅ HOTOVO! Excel má nyní kompletní data (včetně těch ze skrytých dlaždic).")
+            print(f"\n✅ HOTOVO! Excel má nyní kompletní data.")
         else:
             print("\n❌ Nenalezena žádná data.")
 
