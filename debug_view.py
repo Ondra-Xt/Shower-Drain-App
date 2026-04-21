@@ -5,7 +5,7 @@ def run():
     print("Spouštím prohlížeč...")
     # headless=False znamená, že uvidíš okno prohlížeče
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
+        browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         
         url = "https://www.megabad.com/hersteller-kaldewei-duschrinnen-flowline-zero-a-1358942.htm"

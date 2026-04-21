@@ -10,7 +10,7 @@ def run():
         # Browser Setup
         # Headless=False as requested
         # Try Firefox to bypass potential Chromium-specific issues
-        browser = p.firefox.launch(headless=False)
+        browser = p.firefox.launch(headless=True)
         # CRITICAL: Viewport setup 1920x1080
         # Set a real user agent to avoid potential bot detection/JS errors
         context = browser.new_context(

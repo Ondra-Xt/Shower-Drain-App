@@ -8,7 +8,7 @@ def debug_run():
     if not os.path.exists("debug_tech"): os.makedirs("debug_tech")
     
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
+        browser = p.chromium.launch(headless=True)
         # Nastavíme viewport na Full HD, aby web vypadal jako na PC
         context = browser.new_context(viewport={"width": 1920, "height": 1080})
         page = context.new_page()

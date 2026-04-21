@@ -27,7 +27,7 @@ class ReuterTesterV8:
             # Pokud se objeví Captcha, vyřeš ji a příště už by se neměla objevit
             context = p.chromium.launch_persistent_context(
                 self.user_data_dir,
-                headless=False,
+                headless=True,
                 args=[
                     '--disable-blink-features=AutomationControlled',
                     '--start-maximized'

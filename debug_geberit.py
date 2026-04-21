@@ -7,7 +7,7 @@ def debug_geberit_catalog():
     url = "https://catalog.geberit.de/de-DE/search/?q=CleanLine80"
     
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
+        browser = p.chromium.launch(headless=True)
         page = browser.new_page()
         
         print(f"🌍 Jdu na: {url}")

@@ -144,7 +144,7 @@ class SchluterTechScraperV22:
 
         results = []
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False)
+            browser = p.chromium.launch(headless=True)
             # Nastavení reálného prohlížeče
             context = browser.new_context(
                 viewport={'width': 1920, 'height': 1080},

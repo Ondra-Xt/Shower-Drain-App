@@ -1,0 +1,10 @@
+geberit master discovery - najde SKU na strankach geberitu od vsech clean line (20, 30, 50, 60, 80)
+
+geberit official spec - pokusi se najit chybejici data primo u geberitu (jde o radu clean line 30 kterou megabad neprodava a tak nejde u nej nacist parametry a cenu)
+
+geberit pricing - najde ceny geberitu clen line na megabad
+
+geberit calculator - poslada z tech nalezenych dat cele funcni sety
+
+geberit discovery - stara verze na hledani dat o geberitu, aktualne nepouzivane
+

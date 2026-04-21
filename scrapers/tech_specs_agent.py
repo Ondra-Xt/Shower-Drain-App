@@ -176,7 +176,7 @@ class TechSpecsAgent:
         results = []
         
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False) # Headless=False pro ladění
+            browser = p.chromium.launch(headless=True) # Headless=False pro ladění
             page = browser.new_page()
             
             for task in tasks:
