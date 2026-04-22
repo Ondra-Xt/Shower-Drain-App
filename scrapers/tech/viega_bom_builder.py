@@ -20,7 +20,7 @@ class ViegaBOMBuilder:
         print(f"   🔍 Analyzuji detaily: {url}", file=sys.stderr)
         try:
             page.goto(url, timeout=60000)
-            time.sleep(1.5)
+            time.sleep(2)
             
             h1 = page.locator("h1").first.inner_text().strip()
             body_text = page.locator("body").inner_text()
@@ -71,10 +71,13 @@ class ViegaBOMBuilder:
 
         all_collected = []
         with sync_playwright() as p:
+            # --- KLÍČOVÁ OPRAVA PRO CLOUD: Paměťové limity ---
             browser = p.chromium.launch(
-    headless=True, 
-    args=["--no-sandbox", "--disable-dev-shm-usage"]
-)
+                headless=True, 
+                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+            )
+            context = browser.new_context()
+            page = context.new_page()
 
             for url in specific_urls:
                 data = self.extract_bom_details(page, url)

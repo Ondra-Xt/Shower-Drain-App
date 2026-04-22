@@ -147,10 +147,13 @@ class ViegaGreedyMaster:
 
         all_collected = []
         with sync_playwright() as p:
+            # KLÍČOVÁ OPRAVA PRO CLOUD: --disable-dev-shm-usage a --no-sandbox
             browser = p.chromium.launch(
-    headless=True, 
-    args=["--no-sandbox", "--disable-dev-shm-usage"]
-)
+                headless=True, 
+                args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+            )
+            context = browser.new_context(viewport={'width': 1280, 'height': 800})
+            page = context.new_page()
 
             for start_url in self.target_urls:
                 print(f"\n📂 Otevírám: {start_url.split('/')[-1]}", file=sys.stderr)
@@ -169,7 +172,6 @@ class ViegaGreedyMaster:
                         time.sleep(1)
                         page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
                         time.sleep(1.5)
-                        # ============================================
 
                         links = page.locator("a[href*='/Katalog/']").all()
                         model_urls = []
@@ -177,7 +179,7 @@ class ViegaGreedyMaster:
                             href = l.get_attribute("href")
                             if href and ".html" in href:
                                 full_url = "https://www.viega.de" + href if href.startswith("/") else href
-                                if full_url == start_url: continue # Neotevírat dokola tu samou stránku
+                                if full_url == start_url: continue 
                                 
                                 if "Tempoplex" in start_url and "Tempoplex" in full_url:
                                     model_urls.append(full_url)
@@ -188,9 +190,9 @@ class ViegaGreedyMaster:
                         
                         model_urls = list(set(model_urls))
                         print(f"   🧩 Nalezeno pod-modelů k prokliku: {len(model_urls)}", file=sys.stderr)
-                        for m_url in model_urls[:10]: # Pro jistotu zvednuto na 10 modelů
+                        for m_url in model_urls[:10]:
                             try:
-                                page.goto(m_url)
+                                page.goto(m_url, timeout=45000)
                                 time.sleep(1.5)
                                 h1 = page.locator("h1").first.inner_text().strip()
                                 found = self.extract_rich_data(page, m_url, h1)
@@ -201,14 +203,13 @@ class ViegaGreedyMaster:
                         found = self.extract_rich_data(page, start_url, h1)
                         all_collected.extend(found)
                 except Exception as e:
-                    print(f"   ❌ Chyba: {e}", file=sys.stderr)
+                    print(f"   ❌ Chyba u {start_url}: {e}", file=sys.stderr)
             
             browser.close()
 
         if all_collected:
             df_new = pd.DataFrame(all_collected)
             
-            # --- CHYTRÝ PŘEKLADAČ HLAVIČEK ---
             rename_map = {
                 "Component_SKU": "Article_Number_SKU",
                 "Manufacturer": "Brand",
@@ -217,19 +218,15 @@ class ViegaGreedyMaster:
                 "Material_V4A": "Is_V4A"
             }
             df_new.rename(columns=rename_map, inplace=True)
-            # ---------------------------------
 
             if os.path.exists(self.excel_path):
                 df_tech = pd.read_excel(self.excel_path, sheet_name="Products_Tech")
-                
-                # Zajištění, že nehledáme neexistující sloupec
                 sku_col = 'Article_Number_SKU' if 'Article_Number_SKU' in df_tech.columns else 'Component_SKU'
                 
                 if sku_col in df_tech.columns:
                     df_tech[sku_col] = df_tech[sku_col].astype(str).str.replace('.0', '', regex=False).str.strip()
                 
                 df_combined = pd.concat([df_tech, df_new], ignore_index=True)
-                
                 if sku_col in df_combined.columns:
                     df_combined.drop_duplicates(subset=[sku_col], keep='last', inplace=True)
             else:
@@ -237,7 +234,7 @@ class ViegaGreedyMaster:
 
             with pd.ExcelWriter(self.excel_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
                 df_combined.to_excel(writer, sheet_name="Products_Tech", index=False)
-            print(f"\n✅ HOTOVO! Excel má nyní kompletní data.")
+            print(f"\n✅ HOTOVO! Excel aktualizován.")
         else:
             print("\n❌ Nenalezena žádná data.")
 
