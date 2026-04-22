@@ -71,8 +71,10 @@ class ViegaBOMBuilder:
 
         all_collected = []
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
+            browser = p.chromium.launch(
+    headless=True, 
+    args=["--no-sandbox", "--disable-dev-shm-usage"]
+)
 
             for url in specific_urls:
                 data = self.extract_bom_details(page, url)

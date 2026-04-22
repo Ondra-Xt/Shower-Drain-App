@@ -147,8 +147,10 @@ class ViegaGreedyMaster:
 
         all_collected = []
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
+            browser = p.chromium.launch(
+    headless=True, 
+    args=["--no-sandbox", "--disable-dev-shm-usage"]
+)
 
             for start_url in self.target_urls:
                 print(f"\n📂 Otevírám: {start_url.split('/')[-1]}", file=sys.stderr)
