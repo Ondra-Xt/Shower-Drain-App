@@ -5,25 +5,25 @@ import os
 import datetime
 import threading
 
-# --- GLOBÁLNÍ ZÁMEK (Sdílený mezi všemi uživateli) ---
+# --- GLOBÁLNY ZÁMOK (Zdieľaný medzi všetkými používateľmi) ---
 @st.cache_resource
 def get_global_lock():
     return threading.Lock()
 
 lock = get_global_lock()
 
-# --- CHYTRÁ NAVIGACE ---
+# --- CHYTRÁ NAVIGÁCIA ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
 
-# Cesta k Excelu (v hlavní složce projektu)
+# Cesta k Excelu (v hlavnom priečinku projektu)
 EXCEL_PATH = "benchmark_master_v3_fixed.xlsx"
 
-# --- KONFIGURACE STRÁNKY ---
+# --- KONFIGURÁCIA STRÁNKY ---
 st.set_page_config(page_title="Kaldewei Master Dashboard", layout="wide", page_icon="🛀")
 
-# Styly pro tlačítka
+# Štýly pre tlačidlá
 st.markdown("""
     <style>
     .stButton>button { width: 100%; border-radius: 5px; height: 3em; background-color: #007bff; color: white; }
@@ -31,93 +31,113 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # ==============================================================================
-# UI APLIKACE
+# UI APLIKÁCIE
 # ==============================================================================
 
 st.title("🛀 Kaldewei: Master Benchmark Dashboard")
 st.markdown("---")
 
 # --- SIDEBAR ---
-st.sidebar.header("🔌 1. Výběr značek")
+st.sidebar.header("🔌 1. Výber značiek")
 use_viega = st.sidebar.checkbox("Viega", value=True)
-use_geberit = st.sidebar.checkbox("Geberit", value=False)
+use_geberit = st.sidebar.checkbox("Geberit", value=True)
+use_alca = st.sidebar.checkbox("Alcadrain", value=False)
+use_hans = st.sidebar.checkbox("Hansgrohe", value=False)
 
-st.sidebar.header("⚙️ 2. Fáze ke spuštění")
-run_disc = st.sidebar.checkbox("🔍 Discovery (Technická data)", value=True)
-run_bom = st.sidebar.checkbox("🏗️ BOM Builder (Sestavy)", value=True)
+st.sidebar.header("⚙️ 2. Fázy na spustenie")
+run_disc = st.sidebar.checkbox("🔍 Discovery (Technické dáta)", value=True)
+run_bom = st.sidebar.checkbox("🏗️ BOM Builder / Kalkulátor", value=True)
 
 st.sidebar.divider()
 ref_price = st.sidebar.number_input("Ref. cena Kaldewei (EUR)", value=450.0)
 
-# --- HLAVNÍ PLOCHA ---
+# --- HLAVNÁ PLOCHA ---
 col_cmd, col_stat = st.columns([1, 2])
 
 with col_cmd:
     st.subheader("🚀 Ovládací panel")
-    run_btn = st.button("SPUSTIT BENCHMARK", type="primary")
+    run_btn = st.button("SPUSTIŤ BENCHMARK", type="primary")
     
     if run_btn:
-        # Kontrola, zda už někdo jiný nespustil agenty (Global Lock)
+        # Kontrola, či už niekto iný nespustil agentov (Global Lock)
         if lock.locked():
-            st.warning("⚠️ Agenti právě pracují pro jiného uživatele. Počkejte prosím na dokončení.")
+            st.warning("⚠️ Agenti práve pracujú pre iného používateľa. Počkajte prosím na dokončenie.")
         else:
             with lock:
                 status_msg = st.empty()
-                status_msg.info("🔒 Přístup uzamčen. Ostatní uživatelé musí počkat.")
+                status_msg.info("🔒 Prístup uzamknutý. Ostatní používatelia musia počkať.")
                 
                 try:
                     # --- 🔵 VIEGA ---
                     if use_viega:
-                        st.markdown("### 🔵 Zpracovávám: Viega")
-                        
+                        st.markdown("### 🔵 Spracovávam: Viega")
                         if run_disc:
-                            status_msg.info("Viega: Spouštím Discovery...")
+                            status_msg.info("Viega: Spúšťam Discovery...")
                             from viega_master_discovery import ViegaGreedyMaster
-                            agent_disc = ViegaGreedyMaster(excel_path=EXCEL_PATH)
-                            agent_disc.run()
-                            st.success("Viega: Discovery fáze hotova.")
+                            agent_v_disc = ViegaGreedyMaster(excel_path=EXCEL_PATH)
+                            agent_v_disc.run()
+                            st.success("Viega: Discovery fáza hotová.")
 
                         if run_bom:
-                            status_msg.info("Viega: Spouštím BOM Builder...")
+                            status_msg.info("Viega: Spúšťam BOM Builder...")
                             from viega_bom_builder import ViegaBOMBuilder
-                            agent_bom = ViegaBOMBuilder(excel_path=EXCEL_PATH)
-                            # Předáme ukázkovou URL pro testování
+                            agent_v_bom = ViegaBOMBuilder(excel_path=EXCEL_PATH)
+                            # Príklad URL
                             test_urls = ["https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Cleviva-Duschrinnen/Einbauhoehe-ab-95-mm/Advantix-Cleviva-Duschrinne-4981-10.html"]
-                            agent_bom.run(test_urls)
-                            st.success("Viega: BOM sestavy vytvořeny.")
+                            agent_v_bom.run(test_urls)
+                            st.success("Viega: BOM zostavy vytvorené.")
 
                     # --- 🟢 GEBERIT ---
                     if use_geberit:
-                        st.markdown("### 🟢 Zpracovávám: Geberit")
-                        st.info("Geberit modul se připravuje na stabilní verzi...")
+                        st.markdown("### 🟢 Spracovávam: Geberit")
+                        if run_disc:
+                            status_msg.info("Geberit: Spúšťam Discovery (BS4)...")
+                            from geberit_master_discovery import GeberitMasterDiscovery
+                            agent_g_disc = GeberitMasterDiscovery(excel_path=EXCEL_PATH)
+                            agent_g_disc.run()
+                            status_msg.success("Geberit: Discovery hotové.")
+                        
+                        if run_bom:
+                            status_msg.info("Geberit: Počítam systémy (BOM)...")
+                            from geberit_calculator import GeberitSystemCalculatorFinal
+                            agent_g_calc = GeberitSystemCalculatorFinal(excel_path=EXCEL_PATH)
+                            agent_g_calc.run()
+                            status_msg.success("Geberit: Výpočet systémov dokončený.")
+
+                    # --- 🔴 OSTATNÍ (Placeholder pre budúcnosť) ---
+                    if use_alca:
+                        st.info("Alcadrain modul: Čaká na pripojenie BS4 agenta.")
+                    
+                    if use_hans:
+                        st.info("Hansgrohe modul: Čaká na pripojenie BS4 agenta.")
 
                     st.balloons()
-                    st.success("✅ Všechny vybrané operace byly dokončeny!")
+                    st.success("✅ Všetky vybrané operácie boli dokončené!")
                     st.rerun()
 
                 except Exception as e:
-                    st.error(f"❌ Neočekávaná chyba: {e}")
+                    st.error(f"❌ Neočakávaná chyba: {e}")
 
-# --- VIZUALIZACE A DATA ---
+# --- VIZUALIZÁCIA A DÁTA ---
 st.divider()
 
 if os.path.exists(EXCEL_PATH):
     try:
-        # Tlačítko pro stažení
+        # Tlačidlo na stiahnutie
         with open(EXCEL_PATH, "rb") as f:
             st.download_button(
-                label="📥 STÁHNOUT AKTUÁLNÍ EXCEL VÝSLEDKY",
+                label="📥 STIAHNUŤ AKTUÁLNY EXCEL",
                 data=f,
                 file_name=f"kaldewei_benchmark_{datetime.datetime.now().strftime('%d_%m')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
         
-        # Zobrazení datové tabulky
+        # Zobrazenie dátovej tabuľky
         df = pd.read_excel(EXCEL_PATH, sheet_name="Products_Tech")
         if not df.empty:
-            st.subheader("📋 Přehled nalezených technických dat")
+            st.subheader("📋 Prehľad nájdených technických dát")
             st.dataframe(df, use_container_width=True)
     except Exception:
-        st.info("Tabulka se připravuje nebo Excel neobsahuje list 'Products_Tech'.")
+        st.info("Tabuľka sa pripravuje alebo Excel neobsahuje list 'Products_Tech'.")
 else:
-    st.warning("Databáze (Excel) zatím neexistuje. Spusťte Discovery agenta.")
+    st.warning("Databáza (Excel) zatiaľ neexistuje. Spustite Discovery agenta.")
