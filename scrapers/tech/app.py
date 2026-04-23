@@ -91,8 +91,8 @@ with col_main:
                         
                         if run_disc:
                             status.info("Viega: Spouštím Discovery...")
-                            from viega_master_discovery import ViegaMasterDiscovery
-                            ViegaMasterDiscovery(EXCEL_PATH).run()
+                            from viega_master_discovery import ViegaGreedyMaster
+                            ViegaGreedyMaster(EXCEL_PATH).run()
                             st.toast("Viega Discovery Hotovo!")
 
                         if run_specs:
