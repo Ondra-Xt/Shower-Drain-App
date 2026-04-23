@@ -5,28 +5,41 @@ import os
 import datetime
 import threading
 
-# --- GLOBÁLNÍ ZÁMEK ---
+# --- GLOBÁLNÍ ZÁMEK (Zabraňuje kolizi při více uživatelích) ---
 @st.cache_resource
 def get_global_lock():
     return threading.Lock()
 
 lock = get_global_lock()
 
-# --- CESTY A IMPORTY ---
+# --- CHYTRÁ NAVIGACE (Oprava importů pro Cloud) ---
 current_dir = os.path.dirname(os.path.abspath(__file__))
+# Přidáme hlavní složku i složku se skripty do systémové cesty
 if current_dir not in sys.path:
     sys.path.insert(0, current_dir)
+
+# Pokud máš skripty ve složce 'scrapers', odkomentuj toto:
+# script_dir = os.path.join(current_dir, "scrapers", "tech")
+# if script_dir not in sys.path:
+#     sys.path.insert(0, script_dir)
 
 EXCEL_PATH = "benchmark_master_v3_fixed.xlsx"
 
 # --- AUTOMATICKÁ KONTROLA / VYTVOŘENÍ SOUBORU ---
-# Tato funkce zajistí, že se už nikdy neobjeví chyba [Errno 2]
 def check_or_create_excel():
     if not os.path.exists(EXCEL_PATH):
+        # Pokud soubor chybí, vytvoříme ho s prázdnými listy, aby appka nepadala
         with pd.ExcelWriter(EXCEL_PATH, engine='openpyxl') as writer:
-            # Vytvoříme listy se správnými hlavičkami hned na začátku
-            pd.DataFrame(columns=["Article_Number_SKU", "Brand", "Product_Name", "Product_URL"]).to_excel(writer, sheet_name="Products_Tech", index=False)
-            pd.DataFrame(columns=["Component_SKU", "Found_Price_EUR", "Eshop_Source"]).to_excel(writer, sheet_name="Market_Prices", index=False)
+            # List pro technická data
+            pd.DataFrame(columns=[
+                "Article_Number_SKU", "Brand", "Product_Name", "Product_URL", 
+                "Flow_Rate_ls", "Is_V4A", "Color", "Cert_DIN_EN1253", "Cert_DIN_18534"
+            ]).to_excel(writer, sheet_name="Products_Tech", index=False)
+            
+            # List pro ceny
+            pd.DataFrame(columns=[
+                "Component_SKU", "Found_Price_EUR", "Eshop_Source", "Timestamp"
+            ]).to_excel(writer, sheet_name="Market_Prices", index=False)
         return True
     return False
 
@@ -78,7 +91,6 @@ with col_main:
                         
                         if run_disc:
                             status.info("Viega: Spouštím Discovery...")
-                            # Tady voláme přesně tvou třídu z tvého souboru
                             from viega_master_discovery import ViegaMasterDiscovery
                             ViegaMasterDiscovery(EXCEL_PATH).run()
                             st.toast("Viega Discovery Hotovo!")
@@ -86,7 +98,7 @@ with col_main:
                         if run_specs:
                             status.info("Viega: Spouštím BOM Builder...")
                             from viega_bom_builder import ViegaBOMBuilder
-                            # Testovací URL pro Viegu (můžeš upravit dle potřeby)
+                            # Testovací URL pro Viegu
                             test_urls = ["https://www.viega.de/de/produkte/Katalog/Entwaesserungstechnik/Advantix-Duschrinnen/Advantix-Cleviva-Duschrinnen/Einbauhoehe-ab-95-mm/Advantix-Cleviva-Duschrinne-4981-10.html"]
                             ViegaBOMBuilder(EXCEL_PATH).run(test_urls)
                             st.toast("Viega BOM Builder Hotovo!")
@@ -105,11 +117,13 @@ with col_main:
                             status.info("Geberit: Stahuji technické parametry...")
                             from geberit_official_specs import GeberitOfficialSpecsBot
                             GeberitOfficialSpecsBot(EXCEL_PATH).run()
+                            st.toast("Geberit Specs Hotovo!")
 
                         if run_price:
                             status.info("Geberit: Zjišťuji ceny na Megabad...")
                             from geberit_pricing import GeberitPricingV11_EdgeCase
                             GeberitPricingV11_EdgeCase(EXCEL_PATH).run()
+                            st.toast("Geberit Pricing Hotovo!")
 
                         # Výpočet systémů spustíme vždy po Geberitu
                         from geberit_calculator import GeberitSystemCalculatorFinal
@@ -135,7 +149,7 @@ with col_info:
             )
     else:
         st.warning("⚠️ Databáze se připravuje (automatický restart)...")
-        st.rerun() # Pokud soubor chybí, appka se po check_or_create_excel() hned restartuje
+        st.rerun()
 
 # --- ZOBRAZENÍ TABULEK ---
 st.divider()
