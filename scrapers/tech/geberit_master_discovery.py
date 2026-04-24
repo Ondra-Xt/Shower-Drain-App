@@ -36,12 +36,17 @@ class GeberitMasterDiscovery:
             df_tech = pd.DataFrame(columns=self.cols_tech)
         else:
             try:
-                df_tech = pd.read_excel(self.excel_path, sheet_name="Products_Tech")
-                # ZÁSADNÍ OPRAVA: Všechny sloupce hned po načtení převedeme na text
-                for col in df_tech.columns:
-                    df_tech[col] = df_tech[col].astype(str).replace(['nan', 'None'], '')
+                # KLÍČOVÝ FIX: dtype=str při načítání natvrdo vypne float64 hádání
+                df_tech = pd.read_excel(self.excel_path, sheet_name="Products_Tech", dtype=str)
+                # Vyčištění prázdných hodnot
+                df_tech = df_tech.replace(['nan', 'None'], '')
             except Exception:
                 df_tech = pd.DataFrame(columns=self.cols_tech)
+
+        # Zajištění, že všechny sloupce z cols_tech existují (aby concat neházel chybu)
+        for col in self.cols_tech:
+            if col not in df_tech.columns:
+                df_tech[col] = ""
 
         existing_skus = set(df_tech['Component_SKU'].astype(str).str.upper().tolist())
         new_skus_found = []
@@ -58,7 +63,6 @@ class GeberitMasterDiscovery:
                 
                 soup = BeautifulSoup(r.text, 'html.parser')
                 
-                # Najdeme odkazy na produktové detaily
                 target_links = []
                 for a in soup.find_all('a', href=re.compile(r'/product/')):
                     href = a['href']
@@ -66,16 +70,14 @@ class GeberitMasterDiscovery:
                     if full_link not in target_links:
                         target_links.append(full_link)
                 
-                for url in list(set(target_links))[:10]: # Limit na 10 linků pro stabilitu
+                for url in list(set(target_links))[:10]:
                     try:
                         res_prod = requests.get(url, headers=self.headers, timeout=20)
                         p_soup = BeautifulSoup(res_prod.text, 'html.parser')
                         
-                        # Název produktu
                         h1_tag = p_soup.find('h1')
                         h1_text = h1_tag.get_text(strip=True) if h1_tag else f"Geberit {query}"
                         
-                        # Hledání všech SKU (formát 154.xxx.xx.x)
                         page_text = p_soup.get_text()
                         found_skus = re.findall(r'(154\.\d{3}\.[A-Za-z0-9]{2,3}\.\d)', page_text)
                         
@@ -84,10 +86,10 @@ class GeberitMasterDiscovery:
                             if sku_upper not in existing_skus and sku_upper not in [s['Component_SKU'] for s in new_skus_found]:
                                 new_row = {col: "" for col in self.cols_tech}
                                 new_row.update({
-                                    "Component_SKU": sku_upper,
+                                    "Component_SKU": str(sku_upper),
                                     "Manufacturer": "Geberit",
-                                    "Product_Name": h1_text,
-                                    "Tech_Source_URL": url,
+                                    "Product_Name": str(h1_text),
+                                    "Tech_Source_URL": str(url),
                                     "Evidence_Text": f"Stabilní BS4 extrakce: {time.strftime('%d.%m.%Y')}"
                                 })
                                 new_skus_found.append(new_row)
@@ -103,14 +105,21 @@ class GeberitMasterDiscovery:
         # 3. ZÁPIS DO EXCELU S FINÁLNÍM OŠETŘENÍM TYPŮ
         if new_skus_found:
             df_new = pd.DataFrame(new_skus_found)
+            # Převod nových dat na string před spojením
+            df_new = df_new.astype(str).replace(['nan', 'None'], '')
+            
             df_combined = pd.concat([df_tech, df_new], ignore_index=True)
             
-            # Pojistka: Před zápisem vše na string (řeší chybu float64)
-            for col in df_combined.columns:
-                df_combined[col] = df_combined[col].astype(str).replace(['nan', 'None'], '')
+            # FINÁLNÍ FIX: Před zápisem vše na string (kompletní imunizace)
+            df_combined = df_combined.astype(str).replace(['nan', 'None'], '')
 
-            with pd.ExcelWriter(self.excel_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
-                df_combined.to_excel(writer, sheet_name="Products_Tech", index=False)
+            # Ošetření zápisu (vytvoření vs. aktualizace)
+            try:
+                with pd.ExcelWriter(self.excel_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
+                    df_combined.to_excel(writer, sheet_name="Products_Tech", index=False)
+            except:
+                with pd.ExcelWriter(self.excel_path, engine='openpyxl') as writer:
+                    df_combined.to_excel(writer, sheet_name="Products_Tech", index=False)
             
             print(f"\n✅ Discovery hotovo: Přidáno {len(new_skus_found)} nových SKU.")
         else:

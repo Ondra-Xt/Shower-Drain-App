@@ -39,25 +39,33 @@ class GeberitOfficialSpecsBot:
 
         # 1. NAČTENÍ A OKAMŽITÁ KONVERZE TYPŮ
         try:
-            df_tech = pd.read_excel(self.excel_path, sheet_name="Products_Tech")
-            # Zásadní: Převod všeho na string, aby se předešlo chybě float64
-            for col in df_tech.columns:
-                df_tech[col] = df_tech[col].astype(str).replace(['nan', 'None'], '').strip()
+            # KLÍČOVÝ BOD: Načíst VŠE jako text
+            df_tech = pd.read_excel(self.excel_path, sheet_name="Products_Tech", dtype=str)
+            df_tech = df_tech.replace(['nan', 'None'], '')
         except Exception as e:
             print(f"❌ Chyba při čtení Excelu: {e}", file=sys.stderr)
             return
 
-        # Filtrace produktů k aktualizaci
-        is_geberit = df_tech['Manufacturer'].astype(str).str.strip() == 'Geberit'
-        has_url = df_tech['Tech_Source_URL'].astype(str).str.contains('catalog.geberit')
-        
+        # Sjednocení názvů sloupců pro výrobce a URL
+        brand_col = 'Manufacturer' if 'Manufacturer' in df_tech.columns else 'Brand'
+        url_col = 'Tech_Source_URL' if 'Tech_Source_URL' in df_tech.columns else 'Product_URL'
+        sku_col = 'Component_SKU' if 'Component_SKU' in df_tech.columns else 'Article_Number_SKU'
+
         # Pojistíme si existenci a formát klíčových sloupců
         for col in ['Length_mm', 'Color', 'Material_V4A', 'Is_Cuttable']:
-            if col not in df_tech.columns: df_tech[col] = ""
-            df_tech[col] = df_tech[col].astype(str).replace(['nan', 'None'], '').strip()
+            if col not in df_tech.columns: 
+                df_tech[col] = ""
 
+        # Převod celé tabulky na string a odstranění bílých znaků (ochrana datových typů)
+        for col in df_tech.columns:
+            df_tech[col] = df_tech[col].astype(str).str.strip()
+
+        # Filtrace produktů k aktualizaci (hledáme Geberit s chybějící barvou nebo délkou)
+        is_geberit = df_tech[brand_col].str.contains('Geberit', case=False, na=False)
+        has_url = df_tech[url_col].str.contains('catalog.geberit', case=False, na=False)
         needs_update = is_geberit & has_url & ((df_tech['Length_mm'] == "") | (df_tech['Color'] == ""))
-        skus_to_process = df_tech[needs_update]['Component_SKU'].tolist()
+        
+        skus_to_process = df_tech[needs_update][sku_col].tolist()
 
         if not skus_to_process:
             print("✅ Geberit data jsou kompletní (všechny délky a barvy nalezeny).")
@@ -68,8 +76,10 @@ class GeberitOfficialSpecsBot:
 
         # 2. DOČÍTÁNÍ DAT Z WEBU
         for sku in skus_to_process:
-            idx = df_tech.index[df_tech['Component_SKU'] == sku].tolist()[0]
-            url = df_tech.at[idx, 'Tech_Source_URL']
+            idx = df_tech.index[df_tech[sku_col] == sku].tolist()[0]
+            url = df_tech.at[idx, url_col]
+
+            if not url or url == "": continue
 
             try:
                 r = requests.get(url, headers=self.headers, timeout=20)
@@ -103,17 +113,24 @@ class GeberitOfficialSpecsBot:
                 elif any(x in page_text_lower for x in ["crni-stahl", "edelstahl", "1.4301"]): 
                     material = "Edelstahl V2A"
 
-                # Zápis změn (pouze pokud jsme něco našli)
+                # Zápis změn (VŠE MUSÍ BÝT STRING)
+                changed = False
                 if length:
                     df_tech.at[idx, 'Length_mm'] = str(length)
                     df_tech.at[idx, 'Is_Cuttable'] = str(is_cuttable)
+                    changed = True
                 if color:
                     df_tech.at[idx, 'Color'] = str(color)
+                    changed = True
                 if material:
-                    df_tech.at[idx, 'Material_V4A'] = str(material)
+                    # Dynamické určení sloupce pro materiál (Geberit vs Viega konvence)
+                    mat_col = 'Material_V4A' if 'Material_V4A' in df_tech.columns else 'Is_V4A'
+                    df_tech.at[idx, mat_col] = str(material)
+                    changed = True
 
-                updates += 1
-                print(f"   ✅ {sku}: Aktualizováno", file=sys.stderr)
+                if changed:
+                    updates += 1
+                    print(f"   ✅ {sku}: Aktualizováno", file=sys.stderr)
                 time.sleep(0.5)
 
             except Exception as e:
@@ -121,9 +138,8 @@ class GeberitOfficialSpecsBot:
 
         # 3. FINÁLNÍ ULOŽENÍ
         if updates > 0:
-            # Ještě jednou pojistka typů před zápisem
-            for col in df_tech.columns:
-                df_tech[col] = df_tech[col].astype(str).replace(['nan', 'None'], '').strip()
+            # Finální a ultimátní pojistka proti float64
+            df_tech = df_tech.astype(str).replace(['nan', 'None'], '')
 
             with pd.ExcelWriter(self.excel_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
                 df_tech.to_excel(writer, sheet_name="Products_Tech", index=False)

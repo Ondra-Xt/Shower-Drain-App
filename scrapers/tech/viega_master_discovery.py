@@ -38,7 +38,7 @@ class ViegaGreedyMaster:
         ]
 
     def extract_rich_data(self, url):
-        """Náhrada původního extract_rich_data pro čtení tabulek bez prohlížeče."""
+        """Čtení tabulek bez prohlížeče pomocí BeautifulSoup."""
         try:
             r = requests.get(url, headers=self.headers, timeout=20)
             if r.status_code != 200: return []
@@ -46,12 +46,10 @@ class ViegaGreedyMaster:
             soup = BeautifulSoup(r.text, 'html.parser')
             h1_text = soup.find('h1').text.strip() if soup.find('h1') else "Neznámý produkt"
             
-            # PDF Datasheet
             pdf_link = ""
             pdf_tag = soup.find('a', href=re.compile(r'\.pdf'))
             if pdf_tag: pdf_link = "https://www.viega.de" + pdf_tag['href']
 
-            # Průtok z textu
             body_text = soup.get_text()
             global_flow = ""
             m_flow = re.search(r'(\d+(?:,\d+)?)\s*l/s', body_text)
@@ -64,7 +62,6 @@ class ViegaGreedyMaster:
                 rows = table.find_all('tr')
                 if not rows: continue
                 
-                # Identifikace sloupců (přesně podle vašeho JS kódu)
                 headers = [th.text.lower().strip() for th in rows[0].find_all(['th', 'td'])]
                 col_sku = next((i for i, h in enumerate(headers) if any(x in h for x in ['artikel', 'art.-nr'])), -1)
                 col_len = next((i for i, h in enumerate(headers) if any(x in h for x in ['länge', 'abmessung', ' l '])), -1)
@@ -85,13 +82,11 @@ class ViegaGreedyMaster:
                     if sku in found_skus: continue
                     found_skus.add(sku)
                     
-                    # Délka
                     length = cells[col_len].text.strip() if col_len != -1 else ""
                     if not length:
                         m_len = re.search(r'\b(750|800|900|1000|1200)\b', row.get_text())
                         if m_len: length = m_len.group(1)
                     
-                    # Barva a logika Viega
                     color = cells[col_color].text.strip().replace("\n", " ") if col_color != -1 else ""
                     if not color:
                         if "4981-31" in url or "4965-32" in url: color = "Schwarz Matt"
@@ -103,14 +98,13 @@ class ViegaGreedyMaster:
                         elif "Tempoplex" in h1_text: color = "Chrom"
                         else: color = "Standard Edelstahl"
                     
-                    # Průtok a Materiál
                     flow = cells[col_flow].text.strip() if col_flow != -1 else global_flow
                     material = "Edelstahl V4A" if any(x in color.lower() or x in row.get_text().lower() for x in ["v4a", "1.4404"]) else "Edelstahl V2A"
 
                     items.append({
-                        "Article_Number_SKU": sku, "Brand": "Viega", "Product_Name": h1_text,
-                        "Product_URL": url, "Datasheet_URL": pdf_link, "Flow_Rate_ls": flow,
-                        "Length_mm": length, "Color": color, "Is_V4A": material,
+                        "Article_Number_SKU": str(sku), "Brand": "Viega", "Product_Name": str(h1_text),
+                        "Product_URL": str(url), "Datasheet_URL": str(pdf_link), "Flow_Rate_ls": str(flow),
+                        "Length_mm": str(length), "Color": str(color), "Is_V4A": str(material),
                         "Cert_DIN_EN1253": "Yes", "Cert_DIN_18534": "Yes", 
                         "Is_Cuttable": "Yes" if any(x in h1_text for x in ["Vario", "Cleviva"]) else "No"
                     })
@@ -121,8 +115,7 @@ class ViegaGreedyMaster:
             return []
 
     def handle_rozcestnik(self, url):
-        """Nahrazuje proklikávání dlaždic v rozcestnících."""
-        print(f"   🧩 Rozcestník: Analyzuji pod-produkty...", file=sys.stderr)
+        """Analyzuje pod-produkty v rozcestnících."""
         try:
             r = requests.get(url, headers=self.headers, timeout=20)
             soup = BeautifulSoup(r.text, 'html.parser')
@@ -154,17 +147,37 @@ class ViegaGreedyMaster:
 
         if all_collected:
             df_new = pd.DataFrame(all_collected)
+            
+            # --- FIX TYPŮ: Převod všeho na string dřív, než dojde ke spojení ---
+            df_new = df_new.astype(str).replace(['nan', 'None'], '')
+
             if os.path.exists(self.excel_path):
                 try:
-                    df_old = pd.read_excel(self.excel_path, sheet_name="Products_Tech")
+                    # Načítáme existující soubor také striktně jako string
+                    df_old = pd.read_excel(self.excel_path, sheet_name="Products_Tech", dtype=str)
+                    df_old = df_old.replace(['nan', 'None'], '')
+                    
                     df_final = pd.concat([df_old, df_new], ignore_index=True)
                     df_final.drop_duplicates(subset=['Article_Number_SKU'], keep='last', inplace=True)
-                except: df_final = df_new
-            else: df_final = df_new
+                except Exception as e: 
+                    print(f"⚠️ Problém s připojením starých dat: {e}", file=sys.stderr)
+                    df_final = df_new
+            else: 
+                df_final = df_new
 
-            with pd.ExcelWriter(self.excel_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
-                df_final.to_excel(writer, sheet_name="Products_Tech", index=False)
-            print(f"✅ HOTOVO! Uloženo {len(all_collected)} položek.")
+            # Finální pojistka před zápisem
+            df_final = df_final.astype(str).replace(['nan', 'None'], '')
+
+            # Zápis do Excelu
+            # Pokud soubor neexistuje, 'mode' musí být 'w' (zajištěno v app.py, ale tady raději ošetříme)
+            try:
+                with pd.ExcelWriter(self.excel_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
+                    df_final.to_excel(writer, sheet_name="Products_Tech", index=False)
+            except (FileNotFoundError, ValueError):
+                with pd.ExcelWriter(self.excel_path, engine='openpyxl') as writer:
+                    df_final.to_excel(writer, sheet_name="Products_Tech", index=False)
+
+            print(f"✅ HOTOVO! Uloženo {len(df_final)} celkových položek.")
 
 if __name__ == "__main__":
     ViegaGreedyMaster().run()

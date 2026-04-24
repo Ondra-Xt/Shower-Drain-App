@@ -52,14 +52,14 @@ class ViegaBOMBuilder:
                 found_sku = sku_match.group(1).replace(" ", "").replace("\u00A0", "")
 
             return {
-                "Article_Number_SKU": found_sku,
+                "Article_Number_SKU": str(found_sku),
                 "Brand": "Viega",
-                "Product_Name": h1,
-                "Product_URL": url,
-                "Flow_Rate_ls": flow,
-                "Is_V4A": is_v4a,
-                "Cert_DIN_EN1253": cert_1253,
-                "Cert_DIN_18534": cert_18534,
+                "Product_Name": str(h1),
+                "Product_URL": str(url),
+                "Flow_Rate_ls": str(flow),
+                "Is_V4A": str(is_v4a),
+                "Cert_DIN_EN1253": str(cert_1253),
+                "Cert_DIN_18534": str(cert_18534),
                 "Evidence_Text": f"Stabilně vytaženo přes BS4 z {url}"
             }
         except Exception as e:
@@ -68,7 +68,7 @@ class ViegaBOMBuilder:
 
     def run(self, specific_urls=None):
         print("\n" + "="*60)
-        print("🏗️ KROK 2: Viega BOM Builder (Stabilní verze)")
+        print("🏗️ KROK 2: Viega BOM Builder (Oprava typů)")
         print("="*60 + "\n", file=sys.stderr)
 
         if not specific_urls:
@@ -80,22 +80,22 @@ class ViegaBOMBuilder:
             data = self.extract_bom_details(url)
             if data:
                 all_collected.append(data)
-            time.sleep(1) # Malá pauza šetřící server
+            time.sleep(1)
 
         if all_collected:
             df_new = pd.DataFrame(all_collected)
+            # Striktní převod nových dat na text
+            df_new = df_new.astype(str).replace(['nan', 'None'], '')
             
             if os.path.exists(self.excel_path):
                 try:
-                    # Načtení stávajících dat
-                    with pd.ExcelFile(self.excel_path) as xls:
-                        if "Products_Tech" in xls.sheet_names:
-                            df_tech = pd.read_excel(xls, "Products_Tech")
-                        else:
-                            df_tech = pd.DataFrame(columns=self.cols_tech)
+                    # Načtení stávajících dat jako string
+                    df_tech = pd.read_excel(self.excel_path, sheet_name="Products_Tech", dtype=str)
+                    df_tech = df_tech.replace(['nan', 'None'], '')
                     
-                    # Sjednocení a promazání duplicit podle SKU
+                    # Sjednocení
                     df_combined = pd.concat([df_tech, df_new], ignore_index=True)
+                    # Vyčištění duplicit (SKU jako text)
                     df_combined.drop_duplicates(subset=['Article_Number_SKU'], keep='last', inplace=True)
                 except Exception as e:
                     print(f"⚠️ Problém s Excel listem: {e}", file=sys.stderr)
@@ -103,13 +103,20 @@ class ViegaBOMBuilder:
             else:
                 df_combined = df_new
 
+            # Finální pojistka formátování
+            df_combined = df_combined.astype(str).replace(['nan', 'None'], '')
+
             # Zápis do Excelu
             try:
                 with pd.ExcelWriter(self.excel_path, engine='openpyxl', mode='a', if_sheet_exists='replace') as writer:
                     df_combined.to_excel(writer, sheet_name="Products_Tech", index=False)
                 print(f"✅ BOM Builder HOTOVO: Data uložena.")
             except Exception:
+                # Fallback pokud mode='a' selže (např. prázdný soubor)
                 df_combined.to_excel(self.excel_path, sheet_name="Products_Tech", index=False)
-                print(f"✅ BOM Builder HOTOVO: Soubor vytvořen.")
+                print(f"✅ BOM Builder HOTOVO: Soubor vytvořen/přepsán.")
         else:
             print("\n❌ Nebyla získána žádná nová data.")
+
+if __name__ == "__main__":
+    ViegaBOMBuilder().run()
