@@ -1,7 +1,11 @@
+import os
+# --- HACK PRO STREAMLIT CLOUD (Instalace prohlížeče) ---
+# Toto musí být na úplném začátku, aby se stáhl Chromium prohlížeč pro Playwright
+os.system("playwright install chromium")
+
 import streamlit as st
 import pandas as pd
 import sys
-import os
 import datetime
 import threading
 
