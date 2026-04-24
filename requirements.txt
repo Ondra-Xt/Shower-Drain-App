@@ -8,3 +8,7 @@ beautifulsoup4
 plotly
 PyPDF2
 pdfplumber
+libnss3
+libasound2
+libatk-bridge2.0-0
+libxcomposite1
